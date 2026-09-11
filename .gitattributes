@@ -1,0 +1,12 @@
+# 统一换行符：文本文件入库用 LF，避免 Windows 下反复出现 CRLF 噪音
+* text=auto eol=lf
+
+# .bat 必须保留 CRLF，否则 cmd 解析可能出问题
+*.bat text eol=crlf
+
+# 二进制文件不做任何转换
+*.ico  binary
+*.onnx binary
+*.png  binary
+*.jpg  binary
+*.exe  binary

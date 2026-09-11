@@ -1,0 +1,24 @@
+{
+  "url": "http://example.com/#/login",
+  "hotkey": "ctrl+alt+l",
+  "active": 0,
+  "retries": 3,
+  "window_title": "示例站点",
+  "auto_open": true,
+  "accounts": [
+    {
+      "label": "账号一",
+      "username": "user1",
+      "password": "",
+      "org": "某某单位",
+      "hotkey": "ctrl+alt+1"
+    },
+    {
+      "label": "备用账号",
+      "username": "user2",
+      "password": "",
+      "org": "某某单位",
+      "hotkey": ""
+    }
+  ]
+}
