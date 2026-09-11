@@ -79,19 +79,21 @@ jobs:
         # 跑一遍刚打出来的 exe，确认模型、onnxruntime、配置导出/导入在冻结环境里真的能用。
         # 直接 grep exe 是验不出来的 —— 单文件模式里 pyc 是压缩存在 PYZ 中的，
         # 搜字符串恒为 0 命中，那不代表功能没打进去。
+        #
+        # timeout 这层必须留着：CI 是无人值守的机器，万一 exe 卡住或弹了没人点的
+        # 报错框，不加兜底会把整条流水线拖到 6 小时超时（第一次跑就踩到了）。
+        timeout-minutes: 5
         shell: bash
         run: |
-          rm -f dist/_debug/selftest.txt
+          rm -rf dist/_debug/selftest.txt
           rc=0
-          dist/auto_login_vision.exe --selftest || rc=$?
-          echo "自检退出码 = $rc"
-          # exe 是 --windowed 构建的、没有控制台，结果落在同目录的 _debug/selftest.txt
-          for _ in $(seq 1 20); do
-            if [ -f dist/_debug/selftest.txt ]; then break; fi
-            sleep 1
-          done
+          timeout 120 dist/auto_login_vision.exe --selftest || rc=$?
+          echo "自检退出码 = $rc （124 = 超时被强杀）"
+          # exe 是 --windowed 构建的、没有控制台，结果落在同目录的 _debug/selftest.txt。
+          # 这个文件是在截屏/模型/配置都跑完之后才写的，所以「文件在不在」
+          # 正好能把「卡在前面」和「跑完了但没退出」两种情况区分开。
           if [ ! -f dist/_debug/selftest.txt ]; then
-            echo "::error::没有生成 dist/_debug/selftest.txt，自检根本没跑起来"
+            echo "::error::没有生成 dist/_debug/selftest.txt —— 自检卡在写文件之前（退出码 $rc）"
             exit 1
           fi
           echo "----- selftest.txt -----"
