@@ -75,6 +75,32 @@ jobs:
             exit 1
           fi
 
+      - name: 冻结自检
+        # 跑一遍刚打出来的 exe，确认模型、onnxruntime、配置导出/导入在冻结环境里真的能用。
+        # 直接 grep exe 是验不出来的 —— 单文件模式里 pyc 是压缩存在 PYZ 中的，
+        # 搜字符串恒为 0 命中，那不代表功能没打进去。
+        shell: bash
+        run: |
+          rm -f dist/_debug/selftest.txt
+          rc=0
+          dist/auto_login_vision.exe --selftest || rc=$?
+          echo "自检退出码 = $rc"
+          # exe 是 --windowed 构建的、没有控制台，结果落在同目录的 _debug/selftest.txt
+          for _ in $(seq 1 20); do
+            if [ -f dist/_debug/selftest.txt ]; then break; fi
+            sleep 1
+          done
+          if [ ! -f dist/_debug/selftest.txt ]; then
+            echo "::error::没有生成 dist/_debug/selftest.txt，自检根本没跑起来"
+            exit 1
+          fi
+          echo "----- selftest.txt -----"
+          cat dist/_debug/selftest.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::冻结自检未通过（退出码 $rc）"
+            exit 1
+          fi
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v7
         with:

@@ -334,17 +334,23 @@ def selftest() -> int:
     ok, note = solver.warmup()
     lines.append(("模型 OK：" if ok else "模型 失败：") + note)
 
-    lines.extend(_selftest_config())
+    cfg_lines, cfg_ok = _selftest_config()
+    lines.extend(cfg_lines)
 
     out = cfg_mod.app_dir() / "_debug" / "selftest.txt"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
-    return 0 if ok else 1
+    # 退出码只认「模型加载」和「配置读写」这两件必须成的事。
+    # 截屏不算 —— 无人值守的机器上可能没有可截的桌面，那是环境问题不是代码问题。
+    return 0 if (ok and cfg_ok) else 1
 
 
-def _selftest_config() -> list[str]:
+def _selftest_config() -> tuple[list[str], bool]:
     """配置读写的原地往返自检 —— 导出/导入功能有没有真的打进包，看这几行。
+
+    返回 (要打印的行, 是否全部通过)。CI 拿第二个值当门禁，
+    避免"配置代码压根没打进 exe"却看起来构建成功。
 
     全程只在临时目录里读写，**不碰真实的 config.json**。
     """
@@ -391,7 +397,7 @@ def _selftest_config() -> list[str]:
             out.append(f"配置自检异常：{exc!r}")
         finally:
             cfg_mod.config_path = original
-    return out
+    return out, not any("失败" in ln or "异常" in ln for ln in out)
 
 
 def main(argv: list[str]) -> int:
