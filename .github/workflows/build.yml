@@ -34,10 +34,10 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 安装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
@@ -76,7 +76,7 @@ jobs:
           fi
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: auto_login_vision-win64
           path: |
@@ -90,7 +90,7 @@ jobs:
       - name: 发布 Release
         # 只有推 v* 标签时才发 Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ${{ github.ref_name }}
           files: |
@@ -107,7 +107,8 @@ jobs:
                `python -c "import base64;print(base64.b64encode('你的密码'.encode()).decode())"` 生成）；
             3. 双击 exe，托盘出现图标后按热键，即自动完成 **打开网页 → 切到前台 → 登录**。
 
-            右键托盘图标 → `设置…` 可以图形化改配置，不用手写 JSON。
+            右键托盘图标 → `设置…` 可以图形化改配置，不用手写 JSON；
+            界面里还能把配置整体**导出成文件 / 从文件导入**，换机器时不用重敲。
 
             详见 [README](https://github.com/${{ github.repository }}#readme)。
           draft: false
