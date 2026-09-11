@@ -31,6 +31,21 @@ import winapi
 APP_NAME = "滑块自动登录"
 
 
+def _console(text: str) -> None:
+    """往控制台打点东西 —— 打不出来就算了，绝不因此抛异常。
+
+    冻结成 --windowed 的 exe 时，stdout 的编码跟着 Windows 控制台代码页走
+    （英文机器上是 cp1252），中文一打就 UnicodeEncodeError。这个异常一旦冒到
+    顶层，PyInstaller 会弹一个「Failed to execute script」报错框 ——
+    在无人值守的机器上没人去点它，进程就永远卡在那里（CI 上真的卡过一次，
+    整步跑满 timeout）。控制台输出本来就只是给人看的，结果该落的盘都落了。
+    """
+    try:
+        print(text, flush=True)
+    except Exception:
+        pass
+
+
 class App:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -48,7 +63,7 @@ class App:
 
     def log(self, message: str) -> None:
         line = f"[{time.strftime('%H:%M:%S')}] {message}"
-        print(line, flush=True)
+        _console(line)
         try:
             d = self.debug_dir()
             d.mkdir(parents=True, exist_ok=True)
@@ -303,16 +318,16 @@ def probe() -> int:
     img, origin = winapi.grab()
     form = vision.detect_login_form(img, origin)
     popup = vision.detect_popup(img, origin)
-    print(f"屏幕：{img.shape[1]}x{img.shape[0]}  原点 {origin}")
-    print(f"登录表单：{form}")
-    print(f"滑块弹窗：{popup}")
+    _console(f"屏幕：{img.shape[1]}x{img.shape[0]}  原点 {origin}")
+    _console(f"登录表单：{form}")
+    _console(f"滑块弹窗：{popup}")
     if popup:
-        print(f"  抓取点 {popup.grab_point}  面板 {popup.panel}")
+        _console(f"  抓取点 {popup.grab_point}  面板 {popup.panel}")
     out = cfg_mod.app_dir() / "_debug"
     out.mkdir(parents=True, exist_ok=True)
     vis = vision.draw_debug(img, form, popup, origin)
     cv2.imencode(".png", vis)[1].tofile(str(out / "probe.png"))
-    print(f"调试图：{out / 'probe.png'}")
+    _console(f"调试图：{out / 'probe.png'}")
     return 0
 
 
@@ -340,7 +355,7 @@ def selftest() -> int:
     out = cfg_mod.app_dir() / "_debug" / "selftest.txt"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines), encoding="utf-8")
-    print("\n".join(lines))
+    _console("\n".join(lines))
     # 退出码只认「模型加载」和「配置读写」这两件必须成的事。
     # 截屏不算 —— 无人值守的机器上可能没有可截的桌面，那是环境问题不是代码问题。
     return 0 if (ok and cfg_ok) else 1
@@ -415,19 +430,19 @@ def main(argv: list[str]) -> int:
         runner = flow.LoginRunner(cfg, log=app.log)
         try:
             ok = runner.run()
-            print("登录成功" if ok else "登录未完成")
+            _console("登录成功" if ok else "登录未完成")
             return 0 if ok else 1
         except flow.LoginError as exc:
-            print(f"登录失败：{exc}")
+            _console(f"登录失败：{exc}")
             return 1
         except Exception:
-            traceback.print_exc()
+            _console(traceback.format_exc())
             return 1
 
     if "--openpage" in argv:
         app = App(cfg)
         ok = flow.LoginRunner(cfg, log=app.log).prepare_page()
-        print("登录页已就绪" if ok else "没看到登录表单（详见 _debug/login.log）")
+        _console("登录页已就绪" if ok else "没看到登录表单（详见 _debug/login.log）")
         return 0 if ok else 1
 
     App(cfg).run()
