@@ -1,5 +1,8 @@
 # 滑块自动登录（纯视觉版）
 
+[![Build & Release](https://github.com/Entruv1/AutoLogin/actions/workflows/build.yml/badge.svg)](https://github.com/Entruv1/AutoLogin/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/Entruv1/AutoLogin?display_name=tag)](https://github.com/Entruv1/AutoLogin/releases/latest)
+
 针对**某些网站**（需滑块验证登录的内网/后台系统）的自动登录工具。纯视觉实现：
 只截屏、只动鼠标键盘，不读 DOM、不注入 JS、不调接口。
 
@@ -60,10 +63,22 @@
 
 ## 环境要求
 
-- Windows，系统 Python **3.14**（需带 tkinter，且 cv2 / onnxruntime / shapely / pystray 可用）。
+- Windows，Python **3.14**（需带 tkinter，且 cv2 / onnxruntime / shapely / pystray 可用）。
 - 桌面缩放 100%（其他缩放也能用，会自动换算）。
 
+依赖装一遍即可：
+
+```bat
+pip install -r requirements.txt
+```
+
 ## 使用
+
+### 直接用（推荐）
+
+到 [Releases](https://github.com/Entruv1/AutoLogin/releases/latest) 下载
+`auto_login_vision.exe` 和 `config.example.json`，放在同一个目录，
+把后者改名成 `config.json` 填好账号，双击 exe 即可 —— **不需要装 Python**。
 
 ### 跑源码
 
@@ -81,7 +96,30 @@ python src\main.py            :: 托盘常驻
 
 ### 打包
 
-双击 `build.bat`，产物在 `dist\auto_login_vision.exe`。
+本地：双击 `build.bat`，产物在 `dist\auto_login_vision.exe`。
+
+云端：推 `v*` 标签即自动出 Release（见下）。
+
+## 自动构建与发布
+
+`.github/workflows/build.yml` 定义了三件事：
+
+| 触发 | 行为 |
+|---|---|
+| 推到 `main` / 提 PR | 装依赖 → 语法自检 → 打 exe → 产物存为 Artifact（30 天） |
+| 推 `v*` 标签 | 同上，并**自动创建 GitHub Release**，附上 exe 与 `config.example.json` |
+| 手动 `workflow_dispatch` | 在 Actions 页面随时手点一次构建 |
+
+发版就是打个标签：
+
+```bat
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+等 Actions 跑完，Release 页面就会出现带 exe 的新版本。
+构建里加了一道体积校验（< 80MB 直接失败），防止模型或 onnxruntime 没打进去
+却“构建成功”地把空壳发出去。
 
 ## 热键
 
@@ -195,6 +233,8 @@ auto_login_vision/
 │   └── config.py     配置存取
 ├── captcha_recognizer/  YOLOv8-seg 分割模型（slider.onnx，约 40MB）
 ├── assets/app.ico    托盘 / exe 图标
+├── .github/workflows/build.yml  CI：构建 exe + 打标签自动发 Release
+├── requirements.txt  依赖清单（跑源码 / CI 打包都装这一份）
 ├── _ref/             开发期参考截图（已 gitignore）
 ├── _debug/           运行期调试图与日志（已 gitignore）
 ├── config.example.json  配置模板（复制成 config.json 使用）

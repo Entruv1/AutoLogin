@@ -1,0 +1,13 @@
+# 依赖清单（跑源码 / CI 打包都装这一份）
+# 版本下限按本机已验证可用的版本给出，不设上限 —— Python 3.14 需要较新的 wheel
+
+# ---- 运行时 ----
+opencv-python>=4.10      # 截屏图的掩膜 / 形态学 / 模板匹配
+numpy>=2.0               # 图像数组运算
+onnxruntime>=1.20        # 跑 YOLOv8-seg 分割模型（captcha_recognizer/models/slider.onnx）
+shapely>=2.0             # 模型后处理依赖，PyInstaller 的 collect_all 需要它存在
+pystray>=0.19            # 系统托盘图标 + 菜单
+pillow>=10.0             # pystray 渲染图标用
+
+# ---- 打包（只构建 exe 需要，运行 exe 不需要）----
+pyinstaller>=6.10
