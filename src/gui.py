@@ -1,18 +1,23 @@
 # -*- coding: utf-8 -*-
 """极简配置界面（tkinter）。
 
-三处体验要点：
+四处体验要点：
   * 热键不再靠手打 —— 点「按下设置」后直接按组合键，由 hotkey 模块采集；
   * 每个账号可以带一个独立热键，留空即只通过全局热键 / 托盘菜单使用；
-  * 保存不关窗：加账号、填完、点保存，窗口还在，可以接着加下一个。
+  * 保存不关窗：加账号、填完、点保存，窗口还在，可以接着加下一个；
+  * 配置可整体导出成文件、也能从文件导入 —— 换机器或重装时不用一条条重敲。
 """
 from __future__ import annotations
 
+import copy
+import datetime as dt
 import tkinter as tk
-from tkinter import messagebox, ttk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
 import cv2
 
+import config as cfg_mod
 import hotkey as hk
 import vision
 import winapi
@@ -243,9 +248,25 @@ class SettingsWindow:
             foreground=HINT,
         ).pack(side="left", padx=6)
 
+        # ---------------- 配置文件的导出 / 导入
+        opts4 = ttk.Frame(root)
+        opts4.grid(row=7, column=0, columnspan=2, sticky="we", padx=10, pady=(10, 0))
+        ttk.Label(opts4, text="配置文件").pack(side="left")
+        ttk.Button(opts4, text="导出到文件…", width=13, command=self._export_config).pack(
+            side="left", padx=(6, 4)
+        )
+        ttk.Button(opts4, text="从文件导入…", width=13, command=self._import_config).pack(
+            side="left"
+        )
+        ttk.Label(
+            opts4,
+            text="（含账号密码，与 config.json 同格式，可直接拿来换机恢复）",
+            foreground=HINT,
+        ).pack(side="left", padx=6)
+
         # ---------------- 底部
         foot = ttk.Frame(root)
-        foot.grid(row=7, column=0, columnspan=2, sticky="we", padx=10, pady=(14, 2))
+        foot.grid(row=8, column=0, columnspan=2, sticky="we", padx=10, pady=(14, 2))
         ttk.Button(foot, text="测试视觉定位", command=self._test_vision).pack(side="left")
         self.var_status = tk.StringVar(value="")
         self.lbl_status = ttk.Label(foot, textvariable=self.var_status, foreground=COLORS["info"])
@@ -335,20 +356,28 @@ class SettingsWindow:
 
     # ------------------------------------------------------------------ 保存
 
+    def _apply_ui(self, cfg) -> None:
+        """把界面上的内容写进给定的 Config 对象（不落盘、不注册热键）。"""
+        cfg.url = self.var_url.get().strip() or cfg.url
+        cfg.window_title = self.var_win_title.get().strip() or cfg.window_title
+        cfg.hotkey = self.var_hotkey.get().strip() or cfg.hotkey
+        cfg.auto_open = bool(self.var_auto_open.get())
+        cfg.accounts = [cfg_mod.Account(**a) for a in self.accounts]
+        cfg.active = self.index
+        try:
+            cfg.retries = max(1, min(10, int(self.var_retries.get())))
+        except ValueError:
+            cfg.retries = 3
+
+    def _collect_config(self):
+        """把界面上的内容读成一份独立的 Config —— 导出用，连**还没点保存的编辑**也一起带走。"""
+        cfg = copy.deepcopy(self.cfg)
+        self._apply_ui(cfg)
+        return cfg
+
     def _write_config(self) -> None:
         """把界面上的内容全部落盘 + 重新注册热键。不关窗。"""
-        from config import Account
-
-        self.cfg.url = self.var_url.get().strip() or self.cfg.url
-        self.cfg.window_title = self.var_win_title.get().strip() or self.cfg.window_title
-        self.cfg.hotkey = self.var_hotkey.get().strip() or self.cfg.hotkey
-        self.cfg.auto_open = bool(self.var_auto_open.get())
-        self.cfg.accounts = [Account(**a) for a in self.accounts]
-        self.cfg.active = self.index
-        try:
-            self.cfg.retries = max(1, min(10, int(self.var_retries.get())))
-        except ValueError:
-            self.cfg.retries = 3
+        self._apply_ui(self.cfg)
         self.host.apply_config()
         # 注册发生在监听线程里，稍等一下再回读结果
         try:
@@ -362,6 +391,127 @@ class SettingsWindow:
         failed = list(getattr(mgr, "failed", []) or [])
         if failed:
             self._status("有热键没生效：" + "；".join(failed) + " —— 换一个组合键试试", "warn")
+
+    # ------------------------------------------------------- 导出 / 导入配置
+
+    def _with_file_dialog(self, open_dialog):
+        """原生文件对话框挂在 topmost 的子窗口下可能被压在后面 —— 打开前先撤掉 topmost。"""
+        try:
+            self.win.attributes("-topmost", False)
+        except Exception:
+            pass
+        try:
+            return open_dialog()
+        finally:
+            try:
+                self.win.attributes("-topmost", True)
+                self.win.lift()
+            except Exception:
+                pass
+
+    def _export_config(self) -> None:
+        """把当前全部设置导出成一个 JSON 文件（格式和 config.json 完全一致）。"""
+        self._dump_account()
+        default = f"autologin-config-{dt.datetime.now():%Y%m%d}.json"
+        try:
+            path = self._with_file_dialog(
+                lambda: filedialog.asksaveasfilename(
+                    parent=self.win,
+                    title="导出配置到…",
+                    initialdir=str(cfg_mod.app_dir()),
+                    initialfile=default,
+                    defaultextension=".json",
+                    filetypes=[("JSON 配置文件", "*.json"), ("所有文件", "*.*")],
+                )
+            )
+        except Exception as exc:
+            self._status(f"打开保存对话框失败：{exc}", "warn")
+            return
+        if not path:
+            return
+
+        cfg = self._collect_config()
+        try:
+            written = cfg_mod.dump_to(path, cfg)
+        except OSError as exc:
+            messagebox.showerror("导出失败", f"写不进这个文件：\n\n{exc}", parent=self.win)
+            self._status("导出失败 —— 换个位置（比如桌面）再试一次", "warn")
+            return
+
+        have = sum(1 for a in cfg.accounts if a.username and a.password)
+        self._status(
+            f"已导出到 {written.name}　（{len(cfg.accounts)} 个账号 / {have} 个含密码；"
+            f"文件里有账号密码，别随手发给别人）",
+            "ok",
+        )
+
+    def _import_config(self) -> None:
+        """从文件整份导入配置：先确认覆盖范围，再自动备份现有 config.json。"""
+        try:
+            path = self._with_file_dialog(
+                lambda: filedialog.askopenfilename(
+                    parent=self.win,
+                    title="选择要导入的配置文件",
+                    initialdir=str(cfg_mod.app_dir()),
+                    filetypes=[("JSON 配置文件", "*.json"), ("所有文件", "*.*")],
+                )
+            )
+        except Exception as exc:
+            self._status(f"打开选择对话框失败：{exc}", "warn")
+            return
+        if not path:
+            return
+
+        try:
+            new_cfg = cfg_mod.load_from(path)
+        except cfg_mod.ConfigError as exc:
+            messagebox.showerror(
+                "导入失败", f"{Path(path).name} 读不出来：\n\n{exc}", parent=self.win
+            )
+            self._status("导入失败：文件不是合法的配置文件，见弹窗说明", "warn")
+            return
+
+        old = self._collect_config()
+        msg = (
+            f"文件：{Path(path).name}\n\n"
+            f"将导入：\n　{new_cfg.summary()}\n\n"
+            f"被替换：\n　{old.summary()}\n\n"
+            "导入会把当前设置整份覆盖掉（旧的会先备份成 config.json.bak）。\n"
+            "确定继续吗？"
+        )
+        if not messagebox.askyesno("导入确认", msg, parent=self.win, default="no"):
+            self._status("已取消导入，什么都没改", "info")
+            return
+
+        # 备份的是"导入前的当前设置"（含还没点保存的编辑），而不是磁盘上那份旧文件 ——
+        # 否则用户填了一半没保存就导入，那半截内容会无声消失。
+        bak = cfg_mod.backup(old)
+        # 就地改 self.cfg —— host.cfg 引用的就是它，整个换掉会导致保存的还是旧配置
+        for name in ("url", "hotkey", "retries", "window_title", "auto_open"):
+            setattr(self.cfg, name, getattr(new_cfg, name))
+        self.cfg.accounts = new_cfg.accounts
+
+        self.accounts = [
+            dict(label=a.label, username=a.username, password=a.password,
+                 org=a.org, hotkey=getattr(a, "hotkey", ""))
+            for a in new_cfg.accounts
+        ] or [dict(label="默认", username="", password="", org="", hotkey="")]
+        self.index = max(0, min(new_cfg.active, len(self.accounts) - 1))
+        self.cfg.active = self.index
+
+        # 回填界面控件
+        self.var_url.set(self.cfg.url)
+        self.var_hotkey.set(self.cfg.hotkey)
+        self.var_retries.set(str(self.cfg.retries))
+        self.var_win_title.set(self.cfg.window_title)
+        self.var_auto_open.set(bool(self.cfg.auto_open))
+        self._load_account()
+        self._write_config()
+
+        tail = f"，旧配置已备份为 {bak.name}" if bak else ""
+        self._status(
+            f"已导入 {len(self.accounts)} 个账号{self._hotkey_note()}{tail}", "ok"
+        )
 
     def _save_account(self) -> None:
         self._dump_account()

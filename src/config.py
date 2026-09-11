@@ -3,11 +3,16 @@
 
 密码只做 base64 混淆保存，避免明文躺在配置文件里；这不是加密，
 只是防止旁人一眼看到 —— 需要真正保密请自行加壳。
+
+这里同时也是「导出 / 导入配置」的后端：导出就是 to_json() 落盘成任意路径，
+导入就是 load_from() 解析任意路径 —— 和 config.json 走的是同一套解析代码，
+所以导出出来的文件可以直接改名成 config.json 使用，反之亦然。
 """
 from __future__ import annotations
 
 import base64
 import json
+import shutil
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -17,6 +22,10 @@ DEFAULT_URL = "http://example.com/#/login"
 DEFAULT_HOTKEY = "ctrl+alt+l"
 # 浏览器窗口标题里应包含的关键字 —— 触发登录前会先把含该关键字的窗口拉到前台
 DEFAULT_WINDOW_TITLE = "示例站点"
+
+
+class ConfigError(Exception):
+    """配置文件读不出来（格式不对 / 不是本工具的配置）。导入界面要拿它报错。"""
 
 
 def app_dir() -> Path:
@@ -97,9 +106,96 @@ class Config:
         }
 
     def save(self) -> None:
-        config_path().write_text(
-            json.dumps(self.to_json(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        dump_to(config_path(), self)
+
+    def summary(self) -> str:
+        """一句话描述，用于导入确认框 / 状态栏。"""
+        n = len(self.accounts)
+        filled = sum(1 for a in self.accounts if a.username and a.password)
+        return f"{n} 个账号预设（其中 {filled} 个已填账号密码），站点 {self.url}"
+
+
+# --------------------------------------------------------------------- 读写
+
+def parse_config(raw: object) -> Config:
+    """把已解析成 dict 的内容变成 Config。缺字段走默认值，类型不对就抛 ConfigError。"""
+    if not isinstance(raw, dict):
+        raise ConfigError("配置文件的最外层必须是一个 JSON 对象")
+
+    accounts_raw = raw.get("accounts") or []
+    if not isinstance(accounts_raw, list):
+        raise ConfigError("accounts 字段必须是一个列表")
+    for i, item in enumerate(accounts_raw):
+        if not isinstance(item, dict):
+            raise ConfigError(f"accounts 里的第 {i + 1} 项不是对象")
+
+    try:
+        active = int(raw.get("active", 0))
+        retries = int(raw.get("retries", 3))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"active / retries 必须是整数（{exc}）") from exc
+
+    accounts = [Account.from_json(a) for a in accounts_raw] or [Account()]
+    return Config(
+        url=str(raw.get("url") or DEFAULT_URL),
+        hotkey=str(raw.get("hotkey") or DEFAULT_HOTKEY),
+        active=active,
+        retries=max(1, min(10, retries)),
+        window_title=str(raw.get("window_title") or DEFAULT_WINDOW_TITLE),
+        auto_open=bool(raw.get("auto_open", True)),
+        accounts=accounts,
+    )
+
+
+def load_from(path: str | Path) -> Config:
+    """从任意路径读配置。读不出来就抛 ConfigError —— 导入功能靠它给用户报错。"""
+    p = Path(path)
+    if not p.exists():
+        raise ConfigError(f"文件不存在：{p}")
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"读文件失败：{exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"不是 UTF-8 文本，应该是个 JSON 文件（{exc}）") from exc
+
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"不是合法的 JSON：第 {exc.lineno} 行 {exc.msg}") from exc
+    return parse_config(raw)
+
+
+def dump_to(path: str | Path, cfg: Config) -> Path:
+    """把配置写到任意路径（导出功能用）。写不进去会让 OSError 冒出来。"""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps(cfg.to_json(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return p
+
+
+def backup(cfg: Config | None = None) -> Path | None:
+    """把"导入前的设置"备一份成 config.json.bak —— 覆盖前的后悔药。
+
+    传了 cfg 就备份这一份（界面上当前的设置，**含还没点保存的编辑**）；
+    没传就照抄磁盘上的 config.json。写成功返回备份路径，失败返回 None。
+    """
+    src = config_path()
+    dst = src.with_name(src.name + ".bak")
+    if cfg is not None:
+        try:
+            return dump_to(dst, cfg)
+        except OSError:
+            return None
+    if not src.exists():
+        return None
+    try:
+        shutil.copyfile(src, dst)
+    except OSError:
+        return None
+    return dst
 
 
 def load_config() -> Config:
@@ -109,16 +205,7 @@ def load_config() -> Config:
         cfg.save()
         return cfg
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+        return load_from(path)
+    except ConfigError:
+        # 配置坏了也不能让程序起不来 —— 退回默认值，坏文件留在原地供排查
         return Config()
-    accounts = [Account.from_json(a) for a in raw.get("accounts", [])] or [Account()]
-    return Config(
-        url=raw.get("url", DEFAULT_URL),
-        hotkey=raw.get("hotkey", DEFAULT_HOTKEY),
-        active=int(raw.get("active", 0)),
-        retries=int(raw.get("retries", 3)),
-        window_title=raw.get("window_title", DEFAULT_WINDOW_TITLE),
-        auto_open=bool(raw.get("auto_open", True)),
-        accounts=accounts,
-    )

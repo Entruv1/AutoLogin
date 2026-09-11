@@ -4,13 +4,16 @@
     python main.py            正常启动（托盘常驻）
     python main.py --login    不开界面，直接跑一次登录（调试用）
     python main.py --probe    只截屏做视觉定位并输出调试图（不碰鼠标键盘）
-    python main.py --selftest 打包后自检：截屏 + 模型加载 + 推理（结果写 _debug/selftest.txt）
+    python main.py --openpage 只把登录页切到前台 / 打开（不登录）
+    python main.py --selftest 打包后自检：截屏 + 模型加载 + 推理 + 配置读写往返
+                              （结果写 _debug/selftest.txt）
 """
 from __future__ import annotations
 
 import os
 import queue
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -314,7 +317,7 @@ def probe() -> int:
 
 
 def selftest() -> int:
-    """打包后自检：确认截屏、模型、onnxruntime 在冻结环境里都可用。
+    """打包后自检：确认截屏、模型、onnxruntime、配置读写在冻结环境里都可用。
 
     exe 是 --windowed 构建的没有控制台，所以结果同时写到 _debug/selftest.txt。
     """
@@ -331,11 +334,64 @@ def selftest() -> int:
     ok, note = solver.warmup()
     lines.append(("模型 OK：" if ok else "模型 失败：") + note)
 
+    lines.extend(_selftest_config())
+
     out = cfg_mod.app_dir() / "_debug" / "selftest.txt"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
     return 0 if ok else 1
+
+
+def _selftest_config() -> list[str]:
+    """配置读写的原地往返自检 —— 导出/导入功能有没有真的打进包，看这几行。
+
+    全程只在临时目录里读写，**不碰真实的 config.json**。
+    """
+    out: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="alv_cfg_") as tmp:
+        tmp_path = Path(tmp)
+        cfg = cfg_mod.Config(
+            url="http://selftest.example/#/login",
+            hotkey="ctrl+alt+l",
+            retries=4,
+            window_title="自检站点",
+            auto_open=False,
+            accounts=[
+                cfg_mod.Account("自检A", "userA", "pwdA", "单位A", "ctrl+alt+1"),
+                cfg_mod.Account("自检B", "userB", "pwdB", "单位B", ""),
+            ],
+        )
+        original = cfg_mod.config_path
+        try:
+            cfg_mod.config_path = lambda: tmp_path / "config.json"  # type: ignore[assignment]
+            blob = tmp_path / "exported.json"
+
+            cfg_mod.dump_to(blob, cfg)                       # 导出
+            back = cfg_mod.load_from(blob)                   # 导入
+            same = back.to_json() == cfg.to_json()
+            out.append("配置导出/导入 OK：往返一致" if same else "配置导出/导入 失败：往返不一致")
+
+            bak = cfg_mod.backup(back)                       # 备份
+            out.append(f"配置备份 OK：{bak.name}" if bak and bak.exists() else "配置备份 失败")
+
+            # 坏文件必须报 ConfigError 而不是静默返回默认值
+            bad = tmp_path / "bad.json"
+            bad.write_text("这不是 json", encoding="utf-8")
+            try:
+                cfg_mod.load_from(bad)
+                out.append("坏配置检测 失败：居然没报错")
+            except cfg_mod.ConfigError:
+                out.append("坏配置检测 OK：按预期报 ConfigError")
+
+            # 密码 base64 往返
+            okpwd = back.accounts[0].password == "pwdA"
+            out.append("密码混淆往返 OK" if okpwd else "密码混淆往返 失败")
+        except Exception as exc:  # noqa: BLE001
+            out.append(f"配置自检异常：{exc!r}")
+        finally:
+            cfg_mod.config_path = original
+    return out
 
 
 def main(argv: list[str]) -> int:
